@@ -51,13 +51,13 @@ func (f *File) FastStartEnabled() bool {
 // Convert rearranges the file such that the "moov" atom is as close as possible
 // to the beginning of the file.
 func (f *File) Convert(clean bool) error {
-	var shiftBy uint64
+	var shiftBy, cleanSize uint64
 	if clean {
 		for _, atom := range f.atoms {
 			if atom.Type == "free" && atom.Offset < f.mdat.Offset {
-				shiftBy += atom.Size
+				cleanSize += atom.Size
 			} else if atom.Type == "\x00\x00\x00\x00" && atom.Offset < f.mdat.Offset {
-				shiftBy += atom.Size
+				cleanSize += atom.Size
 			}
 		}
 	}
@@ -66,7 +66,7 @@ func (f *File) Convert(clean bool) error {
 		shiftBy += f.moov.Size
 	}
 
-	patchedMoov, err := f.patchChunkOffsetAtoms(f.moov, shiftBy)
+	patchedMoov, err := f.patchChunkOffsetAtoms(f.moov, shiftBy, cleanSize)
 	if err != nil {
 		return err
 	}
@@ -154,6 +154,7 @@ func (f *File) containsCompressedAtoms(parent Atom) (bool, error) {
 			if child.Type == "cmov" {
 				return true, nil
 			}
+			offset += child.Size
 		} else {
 			return false, err
 		}
@@ -190,7 +191,7 @@ func (f *File) copyAtom(atom Atom, dest io.Writer) error {
 	return err
 }
 
-func (f *File) patchChunkOffsetAtoms(parent Atom, shiftBy uint64) ([]byte, error) {
+func (f *File) patchChunkOffsetAtoms(parent Atom, shiftBy, cleanSize uint64) ([]byte, error) {
 	atoms, err := f.findChunkOffsetAtoms(parent)
 	if err != nil {
 		return nil, err
@@ -215,6 +216,7 @@ func (f *File) patchChunkOffsetAtoms(parent Atom, shiftBy uint64) ([]byte, error
 				entryBytes := parentBytes[start:end]
 				entry := binary.BigEndian.Uint32(entryBytes)
 				entry += uint32(shiftBy)
+				entry -= uint32(cleanSize)
 				binary.BigEndian.PutUint32(entryBytes, entry)
 			}
 		} else if atom.Type == "co64" {
@@ -223,6 +225,7 @@ func (f *File) patchChunkOffsetAtoms(parent Atom, shiftBy uint64) ([]byte, error
 				entryBytes := parentBytes[start:end]
 				entry := binary.BigEndian.Uint64(entryBytes)
 				entry += shiftBy
+				entry -= cleanSize
 				binary.BigEndian.PutUint64(entryBytes, entry)
 			}
 		}
